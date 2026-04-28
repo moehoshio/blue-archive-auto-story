@@ -1,0 +1,28 @@
+# bass – example task list. Copy to tasks.yaml and edit.
+#
+# Tasks are executed in order. Each task can be one of:
+#   - main_story:  volume + chapter (+ optional episode)
+#   - event:       event id + chapters (list of chapter numbers)
+#   - story_only:  assume already on a STORY_PLAYING screen; just auto-advance
+#                  until it returns to a story list / home (useful for ad-hoc runs)
+
+# Default behaviour applied to every task; can be overridden per-task.
+defaults:
+  battle:
+    enable_auto: true
+    enable_x2_speed: true
+    pick_first_team: true
+  story:
+    pick_first_choice: true   # if a dialog choice popup is detected
+    skip_seen: false          # tap "Skip" only on previously seen scenes (requires UI cue)
+
+tasks:
+  - type: main_story
+    volume: 1
+    chapter: 3
+
+  - type: event
+    id: "2024_summer"
+    chapters: [1, 2, 3]
+
+  # - type: story_only

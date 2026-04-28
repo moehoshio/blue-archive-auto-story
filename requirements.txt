@@ -1,0 +1,8 @@
+adbutils>=2.4.0
+opencv-python>=4.8.1.78
+numpy>=1.24
+Pillow>=10.3.0
+pyyaml>=6.0
+pydantic>=2.5
+loguru>=0.7
+click>=8.1
