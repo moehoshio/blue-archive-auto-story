@@ -1,0 +1,42 @@
+# Per-template ROI and threshold overrides.
+#
+# Templates live under assets/templates/<group>/<name>.png (optionally with a
+# language subdir, e.g. assets/templates/menu/zh-TW/event_entry.png).
+# Coordinates are in the BASE resolution (see configs/config.example.yaml).
+# ROI = [x, y, w, h] (top-left + size). Omit to search the whole frame.
+# threshold overrides config.match_threshold for that template.
+#
+# Adjust freely; entries below are sensible defaults that the engine relies on
+# only when present (missing entries simply fall back to defaults).
+
+defaults:
+  threshold: 0.85
+
+templates:
+  # ---------------- common ----------------
+  common/close_x:        { roi: [1100, 20, 160, 100], threshold: 0.82 }
+  common/confirm:        { threshold: 0.85 }
+  common/cancel:         { threshold: 0.85 }
+  common/next:           { threshold: 0.85 }
+
+  # ---------------- story ----------------
+  story/auto_off:        { roi: [1100, 0, 180, 80] }
+  story/auto_on:         { roi: [1100, 0, 180, 80] }
+  story/menu_button:     { roi: [1100, 0, 180, 80] }
+  story/choice_marker:   { threshold: 0.80 }
+  story/clear_screen:    { }   # the "story chapter cleared" stamp
+
+  # ---------------- battle ----------------
+  battle/sortie:         { roi: [950, 580, 330, 140] }
+  battle/x1_speed:       { roi: [1100, 20, 180, 80] }
+  battle/x2_speed:       { roi: [1100, 20, 180, 80] }
+  battle/auto_off:       { roi: [1000, 20, 100, 80] }
+  battle/auto_on:        { roi: [1000, 20, 100, 80] }
+  battle/victory:        { threshold: 0.80 }
+  battle/defeat:         { threshold: 0.80 }
+  battle/result_next:    { roi: [880, 580, 400, 140] }
+
+  # ---------------- menu ----------------
+  menu/home_indicator:   { roi: [0, 660, 1280, 60] }
+  menu/event_entry:      { }
+  menu/story_entry:      { }

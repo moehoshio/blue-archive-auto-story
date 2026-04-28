@@ -1,0 +1,41 @@
+# bass – example config. Copy to config.yaml and edit.
+
+adb:
+  # Either a USB serial (from `adb devices`) or "host:port" for emulator/network adb.
+  # Leave blank to auto-pick the first connected device.
+  serial: ""
+  host: "127.0.0.1"
+  port: 5037
+
+# Templates are authored against this resolution. Templates and tap coordinates
+# are scaled at runtime to match the device's actual resolution.
+base_resolution:
+  width: 1280
+  height: 720
+
+# Game language; selects which template subfolder to load when localized templates
+# exist (e.g. assets/templates/<area>/<language>/...).
+language: "zh-TW"   # one of: zh-TW, ja, en
+
+# Default template-match score. Per-template overrides live in assets/regions.yaml.
+match_threshold: 0.85
+
+# Multi-scale search around 1.0; helps with DPI / minor UI differences.
+match_scales: [0.9, 1.0, 1.1]
+
+# Main loop tick (ms). 500–1000 is a good range for ADB screencap.
+loop_interval_ms: 700
+
+# Where to dump diagnostic screenshots when the engine sees an UNKNOWN scene.
+screenshots_on_unknown: true
+debug_dump_dir: "debug_dumps"
+
+# Safety
+unknown_scene_limit: 8        # consecutive UNKNOWN ticks before aborting / recovering
+global_timeout_sec: 7200      # whole run timeout (2 h)
+chapter_timeout_sec: 1800     # per-chapter timeout (30 min)
+
+# Optional OCR
+ocr:
+  enabled: false
+  backend: "tesseract"        # tesseract | paddle

@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bass"
+version = "0.1.0"
+description = "Blue Archive Auto Story – ADB-driven automation for Blue Archive story chapters."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "moehoshio" }]
+keywords = ["blue-archive", "adb", "automation", "android", "opencv"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "adbutils>=2.4.0",
+    "opencv-python>=4.8.1.78",
+    "numpy>=1.24",
+    "Pillow>=10.3.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.5",
+    "loguru>=0.7",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+ocr-paddle = ["paddleocr>=2.7", "paddlepaddle>=2.5"]
+dev = [
+    "pytest>=7.4",
+    "pytest-mock>=3.12",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+bass = "bass.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bass = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
