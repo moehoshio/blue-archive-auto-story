@@ -1,21 +1,25 @@
-"""好感劇情 (MomoTalk) 自動化。
+"""MomoTalk automation.
 
-與主線劇情 (automator.py) 不同的獨立任務: 把每個未讀對話跑完 —— 回覆選項、進入並
-跳過附帶的好感劇情 (Relationship Story)、領獎, 然後切換下一個未讀; 當前列表跑完 (連續
-切換無進展) 就關閉並重開 MomoTalk 以刷新列表; 重開後已無未讀 (主畫面紅點消失) → 結束。
+A separate task from the main story automator (automator.py): reads through every unread
+conversation — handling reply options, entering and skipping attached Relationship Stories,
+collecting rewards — then switches to the next unread. When no more unread conversations are
+reachable in the current list, it closes and reopens MomoTalk to refresh; once the home-screen
+badge disappears, the task is done.
 
-畫面流程 (實測):
-  對話 ──回覆選項──▶ (對方輸入中→新訊息) ──▶ 出現「Relationship Event / Relationship
-  Story」粉色按鈕 ──▶「Begin Relationship Story」──▶ 一般劇情 (Auto/Menu, 沿用主線跳過)
-  ──▶「TOUCH TO CONTINUE」領獎頁 ──▶ 回到對話 (可能還有後續) ──▶ … ──▶ 無新內容。
+Screen flow (observed):
+  Conversation → reply option → (typing… → new messages) → pink "Relationship Event /
+  Relationship Story" button → "Begin Relationship Story" → story screen (Auto/Menu, reusing
+  main-story skip) → "TOUCH TO CONTINUE" reward → back to conversation (may have more) → …
+  → no new content.
 
-辨識策略 (與主線一致地以模板為主, 但列表頭像/分頁/紅點無法穩定模板化, 故那些純位置點擊
-用『參考解析度座標 × 實際縮放』):
-  - 狀態判定/按鈕: momotalk_title / momotalk_reward / momotalk_story_enter /
-    momotalk_story_begin / momotalk_home + 主線的 story_menu/story_skip/...。
-  - 回覆選項框: 對話右下的亮色圓角塊, 以灰階亮度輪廓動態定位 (選項文字每次不同, 無法模板)。
-  - 「對方輸入中/有新內容」: 對話面板兩 tick 的平均差 (輸入動畫/新訊息都會讓面板變動);
-    面板靜止且無任何可操作元素達 idle_switch_ticks → 當前對話結束。
+Detection strategy (template-first, same as main automator; coordinate-based taps only for
+elements that can't be reliably templated — conversation list rows, tabs, badge):
+  - State / buttons: momotalk_title, momotalk_reward, momotalk_story_begin, momotalk_notice,
+    plus the main-story templates story_menu / story_skip / …
+  - Pink "Relationship Story" in-conversation button: detected by HSV color (button text
+    contains the character's name in small font → template unstable across characters).
+  - "Typing… / new message": average pixel diff between two consecutive conversation-panel
+    crops; inactivity for idle_switch_ticks → conversation is done.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ log = logging.getLogger(__name__)
 class MomoStop(str, Enum):
     DONE = "no unread left, momotalk finished"
     STUCK = "no progress for too long, manual help needed"
+    MANUAL_NETWORK = "reconnect attempts exceeded, manual help needed"
     INTERRUPTED = "interrupted by user"
 
 
@@ -51,15 +56,18 @@ class MomoTalkAutomator:
         self.groups = load_assets(cfg.assets_dir)
 
         self._gray = None
+        self._bgr = None             # Current tick's color frame (for pink-button / badge detection)
         self._find_cache: dict = {}
-        self._prev_convo: Optional[np.ndarray] = None  # 上一 tick 的對話面板 (灰階, 偵測變化)
-        self._idle = 0              # 對話無變化且無可操作元素的連續 tick 數
-        self._switches = 0          # 自上次有進展以來的切換次數
-        self._grace = 0             # 轉場 (進入劇情/領獎) 後的載入豁免
-        self._sx = 1.0              # 實際寬 / 參考寬
+        self._prev_convo: Optional[np.ndarray] = None  # Previous tick's conversation panel (grayscale, for change detection)
+        self._idle = 0              # Consecutive ticks with no conversation change and no actionable element
+        self._switches = 0          # Row switches since the last progress event
+        self._grace = 0             # Loading grace ticks after a transition (entering story / reward)
+        self._home_empty = 0        # Consecutive ticks with no unread badge on the home screen (for done confirmation)
+        self._reconnect_count = 0   # Consecutive reconnect taps (stops if over the limit)
+        self._sx = 1.0              # Actual width / reference width
         self._sy = 1.0
 
-    # ---- 座標縮放 (參考 1920x1080 → 實際畫面) ----
+    # ---- Coordinate scaling (reference 1920x1080 → actual screen) ----
     def _pt(self, xy) -> Tuple[int, int]:
         return int(xy[0] * self._sx), int(xy[1] * self._sy)
 
@@ -68,7 +76,7 @@ class MomoTalkAutomator:
         return (int(x0 * self._sx), int(y0 * self._sy),
                 int(x1 * self._sx), int(y1 * self._sy))
 
-    # ---- 模板匹配 (沿用主線快取慣例) ----
+    # ---- Template matching (same per-tick cache convention as the main automator) ----
     def _find(self, group: str, threshold: Optional[float] = None) -> Optional[Match]:
         key = (group, threshold)
         if key in self._find_cache:
@@ -85,7 +93,7 @@ class MomoTalkAutomator:
     def _present(self, group: str, threshold: Optional[float] = None) -> bool:
         return self._find(group, threshold) is not None
 
-    # ---- 點擊 ----
+    # ---- Tap helpers ----
     def _tap_xy(self, x: int, y: int, label: str) -> None:
         log.info("action: %-22s tap (%d,%d)", label, x, y)
         self.adb.tap(x, y)
@@ -100,7 +108,7 @@ class MomoTalkAutomator:
         x, y = self._pt(xy)
         self._tap_xy(x, y, label)
 
-    # ---- 主迴圈 ----
+    # ---- Main loop ----
     def run(self) -> MomoStop:
         self.adb.ensure_device()
         notify.enable_windows_ansi()
@@ -110,6 +118,9 @@ class MomoTalkAutomator:
         self._sy = h / self.mt.ref_height
         log.info("momotalk started. screen %dx%d (scale %.3f,%.3f). press Ctrl+C to stop.",
                  w, h, self._sx, self._sy)
+        # Give an initial grace window so a startup that lands mid-transition doesn't
+        # immediately declare done before any screen element appears.
+        self._grace = self.mt.grace_ticks
         try:
             while True:
                 reason = self._tick()
@@ -126,45 +137,74 @@ class MomoTalkAutomator:
             return MomoStop.INTERRUPTED
 
     def _tick(self) -> Optional[MomoStop]:
-        self._gray = to_gray(self.adb.screencap())
+        self._bgr = self.adb.screencap()
+        self._gray = to_gray(self._bgr)
         self._find_cache = {}
 
-        # 1) 領獎頁 (劇情跳過後): 點一下繼續。最高優先, 因為它會疊在 momotalk 之上。
+        # 0) NOTICE interrupt: network disconnects can occur at any time (same priority as main automator).
+        nr = self._handle_notice()
+        if nr == "stop":
+            notify.manual("network")
+            return MomoStop.MANUAL_NETWORK
+        if nr is not None:
+            self._prev_convo = None  # Notification overlay resets the conversation change baseline
+            return None
+
+        # 1) Reward screen (after a relationship story): tap to continue.
+        #    Highest priority — this screen overlays everything else.
         if self._present("momotalk_reward"):
             self._tap_ref(self.mt.reward_dismiss_xy, "reward continue")
             return self._progress()
 
-        # 2) 一般劇情畫面 (好感劇情): 沿用主線跳過流程 (open menu → skip → confirm)。
+        # 2) Story playback screen (relationship story): reuse main-story skip flow (open menu → skip → confirm).
         if self._in_story():
             self._skip_story_step()
             return self._progress()
 
-        # 3) 好感劇情入口: 先「Begin Relationship Story」面板, 再對話中的粉色按鈕。
+        # 3) Relationship story entry: "Begin Relationship Story" panel first (no character name → stable template),
+        #    then the in-conversation pink "Relationship Story" button (character name in small text → color detection).
         m = self._find("momotalk_story_begin")
         if m:
             self._tap(m, "begin relationship story")
             return self._progress()
-        m = self._find("momotalk_story_enter")
-        if m:
-            self._tap(m, "enter relationship story")
+        pink = self._find_story_enter()
+        if pink is not None:
+            self._tap_xy(pink[0], pink[1], "enter relationship story")
             return self._progress()
 
-        # 4) 在 MomoTalk 對話視窗內。
+        # 4) Inside the MomoTalk conversation popup.
         if self._present("momotalk_title"):
             return self._handle_convo()
 
-        # 5) 不在對話視窗 (已關閉/在主畫面/轉場): 嘗試重開, 或判定結束。
+        # 5) Not in the conversation popup (closed / on home screen / transitioning): reopen or declare done.
         return self._handle_offscreen()
 
     def _progress(self) -> None:
-        """有動作/進展: 清零 idle 與切換計數, 重置變化基準與豁免。"""
+        """An action occurred — reset idle/switch counters, change baseline, and arm grace."""
         self._idle = 0
         self._switches = 0
+        self._home_empty = 0
         self._prev_convo = None
         self._grace = self.mt.grace_ticks
         return None
 
-    # ---- 劇情跳過 (重用主線模板) ----
+    # ---- NOTICE interrupt (reuses main-story templates and network config) ----
+    def _handle_notice(self) -> Optional[str]:
+        m = self._find("network_reconnect")
+        if m:
+            self._reconnect_count += 1
+            if self._reconnect_count > self.cfg.network.max_reconnect:
+                log.error("reconnect failed after %d attempts.", self._reconnect_count)
+                return "stop"
+            self._tap(m, f"reconnect ({self._reconnect_count})")
+            return "acted"
+        if self._present("network_notice"):
+            log.warning("network notice detected, waiting for recovery...")
+            return "wait"
+        self._reconnect_count = 0
+        return None
+
+    # ---- Story skip (reuses main-story templates) ----
     def _in_story(self) -> bool:
         return self._present("story_auto") and (
             self._present("story_menu") or self._present("story_menu_selected"))
@@ -179,14 +219,15 @@ class MomoTalkAutomator:
             self._tap(m, "skip")
             return
         if self._present("story_menu_selected"):
-            return  # 選單已開, 等 skip 鈕出現 (再點會收起)
+            return  # Menu already open; wait for the skip button (re-tapping would close it)
         m = self._find("story_menu")
         if m:
             self._tap(m, "open menu")
 
-    # ---- 對話處理 ----
+    # ---- Conversation handling ----
     def _handle_convo(self) -> Optional[MomoStop]:
-        # 有回覆選項 → 選第一個 (好感任意選即可)。
+        self._home_empty = 0  # MomoTalk is open → definitely not "home screen with no unread"
+        # Reply options available → pick the first one (any choice works for affection).
         label = self._find("momotalk_reply")
         if label is not None:
             dx, dy = self.mt.reply_label_offset
@@ -195,22 +236,25 @@ class MomoTalkAutomator:
             self._tap_xy(x, y, "reply option")
             return self._progress()
 
-        # 無可操作元素: 看對話面板是否在變動 (對方輸入中 / 新訊息陸續出現)。
+        # No actionable element: check whether the conversation panel is changing
+        # (other party typing / new messages arriving). Panel static for idle_switch_ticks → switch.
+        # The transition grace window is only used by _handle_offscreen (story/reward loading gaps);
+        # it does not extend the conversation idle wait here.
         if self._convo_changed():
             self._idle = 0
-            return None  # 有新內容, 等它跑完
-        if self._grace > 0:
-            self._grace -= 1
-            return None
+            return None  # New content arriving — wait for it to settle
         self._idle += 1
         if self._idle < self.mt.idle_switch_ticks:
             return None
 
-        # 當前對話無新內容 → 切換其他未讀。
+        # Current conversation has no new content → switch to another unread row
+        # (rows 1, 2, …, visible_rows-1; row 0 is the current/already-processed conversation).
+        # After exhausting all reachable rows, close and reopen to refresh — never wrap back to row 0.
         self._idle = 0
         self._switches += 1
-        if self._switches > self.mt.max_switches:
-            # 可見列表都跑過仍無進展 → 關閉重開以刷新 (下個 tick 走 offscreen 分支)。
+        last_row = min(self.mt.max_switches, self.mt.visible_rows - 1)
+        if self._switches > last_row:
+            # Exhausted all visible rows with no progress → close and reopen to refresh.
             log.info("no progress after %d switches, reopening momotalk.", self._switches - 1)
             self._switches = 0
             self._tap_ref(self.mt.close_xy, "close (refresh)")
@@ -220,30 +264,62 @@ class MomoTalkAutomator:
         return None
 
     def _switch_conversation(self) -> None:
-        """切到列表中另一個未讀對話 (點第 _switches 列; 第 0 列通常是當前對話)。"""
-        idx = self._switches % max(1, self.mt.visible_rows)
+        """Tap the _switches-th row (1-based) in the unread list (row 0 is the current conversation)."""
+        idx = self._switches
         x = self.mt.first_row_xy[0]
         y = self.mt.first_row_xy[1] + idx * self.mt.row_height
         self._tap_ref((x, y), f"switch unread (row {idx})")
-        self._prev_convo = None  # 換對話, 重置變化基準
+        self._prev_convo = None  # New conversation — reset the change detection baseline
         self._grace = self.mt.grace_ticks
 
+    def _find_story_enter(self) -> Optional[Tuple[int, int]]:
+        """Detect the pink "To X's Relationship Story" button in the conversation area by color.
+        Returns the tap center or None. Color detection is character-agnostic; small-font template
+        matching is unreliable across characters."""
+        if self._bgr is None:
+            return None
+        x0, y0, x1, y1 = self._box(self.mt.story_enter_roi)
+        patch = self._bgr[y0:y1, x0:x1]
+        if patch.size == 0:
+            return None
+        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, tuple(self.mt.story_enter_hsv_lo), tuple(self.mt.story_enter_hsv_hi))
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        min_w = int(self.mt.story_enter_min_w * self._sx)
+        min_h = int(self.mt.story_enter_min_h * self._sy)
+        max_h = int(self.mt.story_enter_max_h * self._sy)
+        best = None
+        for c in cnts:
+            bx, by, bw, bh = cv2.boundingRect(c)
+            if bw < min_w or bh < min_h or bh > max_h:
+                continue
+            if best is None or bw > best[2]:
+                best = (bx, by, bw, bh)
+        if best is None:
+            return None
+        bx, by, bw, bh = best
+        return x0 + bx + bw // 2, y0 + by + bh // 2
+
     def _convo_changed(self) -> bool:
-        """對話面板較上一 tick 是否有明顯變化 (對方輸入中動畫 / 新訊息)。"""
+        """Returns True if the conversation panel changed noticeably since the last tick
+        (other party typing / new message arrived)."""
         x0, y0, x1, y1 = self._box(self.mt.convo_roi)
         cur = self._gray[y0:y1, x0:x1]
         prev = self._prev_convo
         self._prev_convo = cur
         if prev is None or prev.shape != cur.shape:
-            return True  # 首次/換對話: 視為有變化, 先等一拍
+            return True  # First tick or after a conversation switch: treat as changed, wait one tick
         diff = float(cv2.absdiff(cur, prev).mean())
         return diff > self.mt.diff_thresh
 
-    # ---- 不在對話視窗: 重開或結束 ----
+    # ---- Off-screen: reopen or declare done ----
     def _handle_offscreen(self) -> Optional[MomoStop]:
-        m = self._find("momotalk_home")
-        if m is None:
-            # 轉場中 (關閉動畫/載入)。給豁免, 否則計入 idle, 過久判定卡住。
+        # Use the Notice (speaker) icon as the home-screen anchor — its shape is fixed,
+        # unlike the MomoTalk badge which changes number and has a variable lobby background.
+        # Icon absent → transition / loading; wait out the grace window before declaring stuck.
+        notice = self._find("momotalk_notice")
+        if notice is None:
+            self._home_empty = 0
             if self._grace > 0:
                 self._grace -= 1
                 return None
@@ -251,24 +327,49 @@ class MomoTalkAutomator:
             if self._idle >= self.mt.idle_switch_ticks + self.mt.max_switches + 5:
                 return MomoStop.STUCK
             return None
-        # 在主畫面: 有紅點 → 仍有未讀, 重開; 無紅點 → 結束。
-        if self._home_has_unread():
-            self._tap(m, "reopen momotalk")
-            time.sleep(self.mt.tap_delay)
-            self._tap_ref(self.mt.unread_tab_xy, "unread tab")
-            self._tap_ref(self.mt.first_row_xy, "open top unread")
-            self._idle = 0
-            self._switches = 0
-            self._prev_convo = None
-            self._grace = self.mt.grace_ticks
+        # On the home screen: MomoTalk entry = notice center + offset.
+        # If the unread badge is present → still has unread, reopen to refresh.
+        ox, oy = self.mt.notice_home_offset
+        mx = notice.x + int(ox * self._sx)
+        my = notice.y + int(oy * self._sy)
+        if self._home_has_unread(mx, my):
+            self._home_empty = 0
+            self._reopen(mx, my)
             return None
-        return MomoStop.DONE
+        # No badge: could be genuinely done, or could be a brief gap right after a story → reward
+        # transition (MomoTalk closed, notice visible, but reward screen not yet appeared).
+        # Two guards prevent a false "done": (1) grace window suppresses the check; (2) even after
+        # grace, require done_confirm_ticks consecutive ticks without a badge — the transition gap
+        # is only a few ticks, after which MomoTalk reopens and _handle_convo resets _home_empty.
+        if self._grace > 0:
+            self._grace -= 1
+            return None
+        self._home_empty += 1
+        if self._home_empty >= self.mt.done_confirm_ticks:
+            return MomoStop.DONE
+        return None
 
-    def _home_has_unread(self) -> bool:
-        """主畫面 MomoTalk 入口是否有紅點 (= 仍有未讀)。在紅點框內找飽和紅色像素。"""
-        bgr = self.adb.screencap()
-        x0, y0, x1, y1 = self._box(self.mt.home_badge_roi)
-        patch = bgr[y0:y1, x0:x1]
+    def _reopen(self, home_x: int, home_y: int) -> None:
+        """Reopen MomoTalk and navigate to the top of the unread list:
+        tap home entry → unread tab → topmost conversation row.
+        Entry coordinates are derived from the notice anchor (stable across lobby changes)."""
+        self._tap_xy(home_x, home_y, "reopen momotalk")
+        time.sleep(self.mt.tap_delay)
+        self._tap_ref(self.mt.unread_tab_xy, "unread tab")
+        self._tap_ref(self.mt.first_row_xy, "open top unread")
+        self._idle = 0
+        self._switches = 0
+        self._prev_convo = None
+        self._grace = self.mt.grace_ticks
+
+    def _home_has_unread(self, home_x: int, home_y: int) -> bool:
+        """Check whether the MomoTalk entry on the home screen has a red unread badge.
+        The badge ROI is relative to the entry center (moves with the notice anchor),
+        and is detected by saturated red pixels in HSV."""
+        dx0, dy0, dx1, dy1 = self.mt.home_badge_rel
+        x0 = home_x + int(dx0 * self._sx); y0 = home_y + int(dy0 * self._sy)
+        x1 = home_x + int(dx1 * self._sx); y1 = home_y + int(dy1 * self._sy)
+        patch = self._bgr[y0:y1, x0:x1]
         if patch.size == 0:
             return False
         hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)

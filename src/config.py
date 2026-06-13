@@ -1,4 +1,4 @@
-"""設定載入: 從 config.yaml 讀取並提供型別化的設定物件。"""
+"""Config loading: reads config.yaml and provides typed config objects."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,8 +23,8 @@ class MatchingConfig:
     scale_steps: int = 17
     default_threshold: float = 0.80
     scale_cache_tolerance: float = 0.08
-    # 匹配前把畫面縮到此寬度再比對 (成本∝像素數); 0 = 不縮。
-    # 大型 UI 元素在 960 寬下精度無損, 速度約快 (orig/960)^2 倍。
+    # Resize the screen to this width before matching (cost ∝ pixel count); 0 = no resize.
+    # Large UI elements lose no precision at 960px; speed gain ≈ (original/960)^2.
     proc_width: int = 960
 
 
@@ -33,8 +33,9 @@ class LoopConfig:
     tick_interval: float = 1.0
     tap_delay: float = 0.5
     idle_ticks_to_end: int = 30
-    # 流程變更 (動作/狀態轉移) 後的「豁免」ticks: 期間即使無任何匹配也不計入失敗數
-    # (涵蓋載入/動畫空檔, 如戰鬥載入 ~10s)。豁免用完才開始累計 → STUCK。
+    # Grace ticks after a state transition (action / state change): blank frames during this
+    # window don't count toward the stuck counter (covers loading / animation gaps ~10s).
+    # The stuck counter only starts accumulating once the grace window is exhausted.
     transition_grace_ticks: int = 8
 
 
@@ -50,41 +51,69 @@ class NetworkConfig:
 
 @dataclass
 class MomoTalkConfig:
-    """好感劇情 (MomoTalk) 自動化參數。
+    """MomoTalk automation parameters.
 
-    定位採『參考解析度 (1920x1080) 下的絕對座標』, 執行時依實際畫面寬高線性縮放
-    (彈窗為固定版面, 縮放後在其他解析度仍對位)。劇情列表的頭像/分頁/紅點無法用
-    模板穩定辨識, 故對話切換/重開等純位置點擊用座標, 狀態判定與按鈕用模板匹配。"""
+    Coordinates use the reference resolution (1920x1080) and are scaled linearly to
+    the actual screen size at runtime (the popup layout is fixed, so this stays accurate
+    across resolutions). Template matching is used for state detection and buttons;
+    coordinate-based taps are used for the conversation list, tabs, and badge detection
+    because those elements can't be reliably templated (avatar thumbnails, variable text,
+    red-dot badge numbers)."""
     ref_width: int = 1920
     ref_height: int = 1080
-    # 關閉彈窗的 X (右上)。
+    # Close button (X) in the top-right of the MomoTalk popup.
     close_xy: tuple = (1681, 177)
-    # 主畫面 MomoTalk 入口 (重開用); 也用模板 momotalk_home 確認在主畫面。
-    home_xy: tuple = (220, 220)
-    # 重開後預設停在『學生』分頁; 需點左側『未讀訊息』分頁 (聊天氣泡圖標)。
+    # Home-screen positioning: instead of matching the MomoTalk icon directly (badge number
+    # changes, background shifts with the lobby), we anchor on the Notice (speaker) icon
+    # (momotalk_notice template — solid blue, fixed shape). MomoTalk entry = notice center
+    # + this offset. The unread badge ROI is also relative to this anchor.
+    notice_home_offset: tuple = (142, 10)
+    # After reopening, the popup lands on the "Students" tab; click the "Unread" tab (left side).
     unread_tab_xy: tuple = (255, 430)
-    # 未讀列表最上方對話列中心 + 每列高度 + 可見列數。
+    # Center of the topmost conversation row in the unread list + per-row height + visible row count.
     first_row_xy: tuple = (450, 400)
     row_height: int = 105
     visible_rows: int = 5
-    # 領獎頁『TOUCH TO CONTINUE』的安全點擊處 (避開可點的道具圖標)。
+    # Safe tap location on the reward screen's "TOUCH TO CONTINUE" (avoids tapping item icons).
     reward_dismiss_xy: tuple = (960, 1010)
-    # 主畫面 MomoTalk 入口紅點的偵測框 (有紅點=仍有未讀); ref 座標 (x0,y0,x1,y1)。
-    home_badge_roi: tuple = (232, 158, 272, 192)
-    # 回覆選項: 對話右下「| Reply」標籤 (momotalk_reply 模板) 命中後, 點其右下固定位移處
-    # 的第一個選項 (1~2 個選項時第一個都在標籤正下方; 好感任意選即可)。位移為參考解析度像素。
+    # Unread badge detection ROI relative to the MomoTalk entry center (x0,y0,x1,y1).
+    # Red pixels in this box = still has unread conversations. Moves with the notice anchor,
+    # so it stays correct even when the lobby background shifts.
+    home_badge_rel: tuple = (12, -62, 52, -28)
+    # Reply options: after the "| Reply" label (momotalk_reply template) is found, tap at
+    # this fixed pixel offset from the label to hit the first reply option.
+    # (With 1–2 options, the first one is always directly below-right of the label.)
     reply_label_offset: tuple = (200, 85)
-    # 對話面板的變化偵測框 (右側); 兩 tick 平均差 > diff_thresh 視為有新內容 (對方輸入中/新訊息)。
+    # Pink "Relationship Story" button in conversation: the text contains the character's name
+    # in small font, making template matching unstable across characters (score 0.6–0.8).
+    # Instead, color detection finds a sufficiently wide saturated-pink horizontal stripe in the ROI.
+    # The title bar is also pink but is excluded by the y > 250 lower bound.
+    # Values: HSV lower/upper bounds + minimum/maximum strip dimensions (reference pixels).
+    story_enter_roi: tuple = (1100, 250, 1810, 965)
+    story_enter_hsv_lo: tuple = (150, 50, 160)
+    story_enter_hsv_hi: tuple = (180, 200, 255)
+    story_enter_min_w: int = 250
+    story_enter_min_h: int = 30
+    story_enter_max_h: int = 95
+    # Conversation activity detection ROI (right panel); average pixel difference between
+    # two consecutive ticks above diff_thresh = new content (typing indicator or new message).
     convo_roi: tuple = (1100, 230, 1810, 950)
     diff_thresh: float = 2.0
-    # 連續多少 tick 對話無變化且無可操作元素 → 視為當前對話結束, 切換下一個未讀。
-    idle_switch_ticks: int = 8
-    # 連續切換這麼多次仍無進展 → 關閉並重開以刷新列表。
+    # Consecutive ticks with no conversation change and no actionable element → treat the
+    # current conversation as finished and switch to the next unread.
+    # "Typing…" animations typically resolve within 5 s; exceeding this means no new content.
+    idle_switch_ticks: int = 5
+    # Consecutive switches across visible rows with no progress → close and reopen MomoTalk
+    # to refresh the list. Effective cap = min(max_switches, visible_rows - 1): only rows
+    # 1..visible_rows-1 are tried (row 0 is the current conversation); on exhaustion, reopen.
     max_switches: int = 5
-    # 重開後紅點消失 (無未讀) → 任務結束。
+    # Require this many consecutive ticks with no unread badge before declaring the task done.
+    # Prevents false positives from the brief moments when the badge disappears during a
+    # story or reward transition (those gaps are only a few ticks; MomoTalk returns quickly).
+    done_confirm_ticks: int = 6
     tap_delay: float = 0.6
     tick_interval: float = 1.0
-    # 流程轉場 (進入劇情/領獎) 的載入空檔豁免 ticks。
+    # Grace ticks after entering a story or reward screen (covers loading gaps).
     grace_ticks: int = 10
 
 
@@ -106,7 +135,7 @@ class Config:
 
 
 def _build_momotalk(data: dict) -> MomoTalkConfig:
-    """以 YAML 覆寫 MomoTalkConfig; 座標欄位 (list) 一律轉成 tuple, 其餘原樣帶入。"""
+    """Apply YAML overrides to MomoTalkConfig; convert list values to tuples for coordinate fields."""
     valid = {f.name for f in _dc_fields(MomoTalkConfig)}
     kwargs = {}
     for k, v in data.items():
@@ -117,7 +146,7 @@ def _build_momotalk(data: dict) -> MomoTalkConfig:
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
-    """讀取 YAML 設定; 缺漏欄位以 dataclass 預設值補齊。"""
+    """Load YAML config; missing fields fall back to dataclass defaults."""
     data: dict = {}
     p = Path(path)
     if p.exists():

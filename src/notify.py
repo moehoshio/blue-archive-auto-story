@@ -1,9 +1,9 @@
-"""人工介入提示。
+"""Manual-intervention and completion notices.
 
-設計約定 (見使用者回饋):
-- 一般日誌一律英文。
-- 唯獨『需要人工介入 / 任務結束需手動接續』這類提示, 以本地化語言 (中文) +
-  顏色標準輸出, 讓使用者一眼注意到。
+Design convention:
+- All regular log output is in English.
+- Only "manual intervention needed / task done, continue manually" notices are localized
+  (Chinese) and printed in color to stdout, so the user spots them immediately.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _YELLOW = "\033[1;93m"
 _GREEN = "\033[1;92m"
 _RESET = "\033[0m"
 
-# 本地化提示文案 (僅此處本地化)。
+# Localized notice text (only this dict is localized).
 _MESSAGES = {
     "network": (_RED, "⚠ 需要人工介入：網路重連多次仍失敗，請手動檢查網路後重試。"),
     "stuck": (_RED, "⚠ 需要人工介入：長時間未偵測到可操作元素，可能卡住，請手動排查。"),
@@ -30,7 +30,7 @@ def _supports_color() -> bool:
 
 
 def enable_windows_ansi() -> None:
-    """在 Windows 主控台啟用 ANSI 跳脫序列 (VT 處理)。非 Windows 為無操作。"""
+    """Enable ANSI escape sequences (VT processing) on the Windows console. No-op on other platforms."""
     if sys.platform != "win32":
         return
     try:
@@ -47,7 +47,7 @@ def enable_windows_ansi() -> None:
 
 
 def manual(kind: str) -> None:
-    """印出一則本地化、上色的人工介入/結束提示。kind 不在表中時原樣輸出。"""
+    """Print a localized, colored manual-intervention or completion notice."""
     color, text = _MESSAGES.get(kind, (_YELLOW, kind))
     if _supports_color():
         print(f"\n{color}{text}{_RESET}\n", flush=True)

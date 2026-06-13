@@ -1,4 +1,4 @@
-"""日誌設定。"""
+"""Logging setup."""
 from __future__ import annotations
 
 import logging

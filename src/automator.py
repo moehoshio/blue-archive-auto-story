@@ -3,7 +3,7 @@
 States (see user's spec):
   LIST      story list, not entered. Always has book + enter.
   STORY     story playing. Top-right has auto + menu.
-  MOBILIZE  pre-combat ("臨戰"). Has the mobilize button.
+  MOBILIZE  pre-combat formation screen. Has the mobilize button.
   COMBAT    in battle. Has auto (on/off) + speed (1-3) controls.
   RESULT    battle result. Always has the analyze icon; the confirm button differs
             for win (combat_completed_confirm, bottom-right) vs lose
@@ -87,7 +87,8 @@ STATE_DETECT = {
     ],
 }
 
-# 當前流程元素連續缺席這麼多 tick 才做一次全狀態重定位 (省下每 tick 全掃成本)。
+# Run a full all-states relocate scan after this many consecutive ticks with no current-flow element
+# (keeps the expensive all-states scan rare rather than every tick).
 RELOCATE_INTERVAL = 4
 
 

@@ -1,4 +1,4 @@
-"""ADB 控制: 截圖與點擊。使用標準 adb (screencap + input tap)。"""
+"""ADB control: screencap and tap via standard adb (screencap + input tap)."""
 from __future__ import annotations
 
 import logging
@@ -46,14 +46,14 @@ class Adb:
         return proc.stdout or b""
 
     def ensure_device(self) -> None:
-        """確認有可用裝置, 否則丟出錯誤。"""
+        """Verify a device is available; raise AdbError otherwise."""
         out = self._run(["get-state"], capture=True).decode("utf-8", "ignore").strip()
         if out != "device":
             raise AdbError(f"device not ready, adb get-state = '{out}'")
         log.info("ADB device ready: %s", self.cfg.serial or "(default)")
 
     def screencap(self) -> np.ndarray:
-        """截圖, 回傳 BGR 影像。使用 exec-out 避免 Windows CRLF 問題。"""
+        """Capture a screenshot; return a BGR image. Uses exec-out to avoid Windows CRLF corruption."""
         raw = self._run(["exec-out", "screencap", "-p"], capture=True)
         if not raw:
             raise AdbError("screencap returned empty data")

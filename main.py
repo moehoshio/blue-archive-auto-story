@@ -1,11 +1,11 @@
-"""進入點。
+"""Entry point.
 
-用法:
-  python main.py                 # 啟動自動劇情 (主線/活動)
-  python main.py --momotalk      # 啟動好感劇情 (MomoTalk) 自動化
-  python main.py --config x.yaml # 指定設定檔
-  python main.py --probe         # 只截一次圖, 列出偵測到的所有元素 (不動作), 供調參
-  python main.py --probe --save out.png  # 同時把截圖存檔
+Usage:
+  python main.py                       # Run auto story (main/event)
+  python main.py --momotalk            # Run MomoTalk automation
+  python main.py --config x.yaml      # Use a custom config file
+  python main.py --probe               # Take one screenshot, print detected elements (no taps)
+  python main.py --probe --save out.png  # Same, and save the screenshot
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import argparse
 import logging
 import sys
 
-# Windows 終端常為 cp950, 直接 print ✓ 等字元會崩潰; 強制 stdout 用 utf-8。
+# Windows terminals are often cp950; force stdout to utf-8 so ✓ / ⚠ characters don't crash.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -31,7 +31,7 @@ log = logging.getLogger("main")
 
 
 def probe(cfg, save: str | None) -> None:
-    """截一次圖, 對每個群組做匹配並列出結果, 不執行任何點擊。"""
+    """Take one screenshot, match every group, print results — no taps."""
     adb = Adb(cfg.adb)
     adb.ensure_device()
     bgr = adb.screencap()
@@ -57,11 +57,11 @@ def probe(cfg, save: str | None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Blue Archive 自動劇情工具")
-    parser.add_argument("--config", default="config.yaml", help="設定檔路徑")
-    parser.add_argument("--probe", action="store_true", help="只偵測不動作 (調參用)")
-    parser.add_argument("--save", default=None, help="probe 時把截圖存到此路徑")
-    parser.add_argument("--momotalk", action="store_true", help="跑好感劇情 (MomoTalk) 而非主線")
+    parser = argparse.ArgumentParser(description="Blue Archive auto-story tool")
+    parser.add_argument("--config", default="config.yaml", help="path to config file")
+    parser.add_argument("--probe", action="store_true", help="detect only, no taps (for tuning thresholds/scales)")
+    parser.add_argument("--save", default=None, help="save the probe screenshot to this path")
+    parser.add_argument("--momotalk", action="store_true", help="run MomoTalk automation instead of main story")
     args = parser.parse_args()
 
     cfg = load_config(args.config)

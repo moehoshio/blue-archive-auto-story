@@ -1,44 +1,63 @@
-# Blue Archive 自動劇情工具設定
+# Blue Archive Auto Story — configuration
 
 adb:
-  path: adb          # adb 執行檔路徑 (若不在 PATH 請填完整路徑)
-  serial: null       # 指定裝置序號; null = 使用唯一連線裝置 (adb devices 查看)
+  path: adb          # Path to the adb executable; use a full path if adb is not in PATH
+  serial: null       # Device serial to use; null = the only connected device (check: adb devices)
 
 matching:
-  # 螢幕解析度可變動 → 對模板做多尺度縮放匹配
-  scale_min: 0.65    # 真實 UI 元素的縮放都遠高於此; 過低只會在小尺度咬到背景雜訊
-  scale_max: 1.6     # 此裝置元素原生尺度約 1.0~1.16; >1.6 純屬浪費。收窄也讓粗網格更細
+  # The screen resolution may differ from the asset capture resolution,
+  # so templates are matched at multiple scales.
+  scale_min: 0.65    # Minimum scale to try; real UI elements are always well above this floor
+  scale_max: 1.6     # Maximum scale; native element scale on this device is ~1.0-1.16; >1.6 wastes time
   scale_steps: 17
   default_threshold: 0.75
-  # 找到一次匹配後快取縮放比例, 之後優先在其附近搜尋以加速
+  # After a successful match, cache the winning scale and search near it first on subsequent ticks.
   scale_cache_tolerance: 0.08
-  # 匹配前把畫面縮到此寬度 (0=不縮)。960 約 4x 加速; 配合 vision 的『由粗到細尺度
-  # 細化』, 連 "All Episodes cleared." 細文字橫幅也能在 960 下命中 (~0.80)。
+  # Resize the screen to this width before matching (0 = no resize).
+  # 960px gives ~4x speedup; combined with coarse-to-fine scale refinement,
+  # even narrow text banners like "All Episodes cleared." still match reliably (~0.80).
   proc_width: 960
 
 loop:
-  tick_interval: 1.0   # 主循環間隔 (秒); 流程變更不降速靠豁免機制, 而非縮短此間隔
-  tap_delay: 0.5       # 點擊後等待動畫的時間 (秒)
-  idle_ticks_to_end: 30  # 豁免用完後, 連續多少 tick 仍無匹配 → 視為卡住/結束
-  transition_grace_ticks: 8  # 流程變更後的豁免 ticks (期間空白畫面不計入失敗)
+  tick_interval: 1.0   # Seconds between screen checks; flow changes are handled by grace ticks, not a shorter interval
+  tap_delay: 0.5       # Seconds to wait after each tap for animations to settle
+  idle_ticks_to_end: 30  # Consecutive ticks with no match → declare stuck / done
+  transition_grace_ticks: 8  # Grace ticks after a state transition; blank frames don't count as failures during this window
 
 combat:
-  desired_speed: 3     # 目標倍速 (2 或 3)
+  desired_speed: 3     # Target battle speed multiplier (2 or 3)
 
 network:
-  max_reconnect: 10    # 重連點擊上限, 超過則停止並要求人工介入
+  max_reconnect: 10    # Max reconnect button taps; exceeding this stops the tool and asks for manual help
 
-# 好感劇情 (MomoTalk, --momotalk 模式)。座標為『參考解析度 1920x1080』下的絕對值,
-# 執行時依實際畫面線性縮放。彈窗為固定版面, 一般無需更動; 換機型對位不準時再微調。
+# MomoTalk (--momotalk mode) settings.
+# Coordinates are absolute values at reference resolution 1920x1080 and are scaled linearly to
+# the actual screen at runtime. The popup layout is fixed, so these rarely need adjustment;
+# only tweak if taps land in the wrong place on your device/resolution.
 momotalk:
-  idle_switch_ticks: 8   # 對話連續這麼多 tick 無新內容且無回覆 → 切換下一個未讀
-  max_switches: 5        # 連續切換這麼多次仍無進展 → 關閉並重開以刷新未讀列表
-  grace_ticks: 10        # 進入劇情/領獎的載入空檔豁免 ticks
-  tick_interval: 1.0     # 主循環間隔 (秒)
-  tap_delay: 0.6         # 點擊後等待動畫 (秒)
-  # 以下為定位座標, 通常不需更動 (見 src/config.py MomoTalkConfig 說明):
-  # close_xy / home_xy / unread_tab_xy / first_row_xy / row_height / reply_label_offset ...
+  idle_switch_ticks: 5   # Ticks of conversation inactivity (not "typing…") → treat as done, switch to next unread
+  max_switches: 5        # Max switches across visible rows before closing and reopening MomoTalk to refresh the list
+  grace_ticks: 10        # Grace ticks after entering a story or reward screen (covers loading gaps)
+  done_confirm_ticks: 6  # Consecutive ticks with no unread badge before declaring the task done (avoids false positive during reward/transition)
+  tick_interval: 1.0     # Seconds between screen checks
+  tap_delay: 0.6         # Seconds to wait after each tap
+
+  # Coordinate tuning (reference resolution 1920x1080; scaled at runtime).
+  # Adjust these if taps land in the wrong place on your device.
+
+  # MomoTalk entry = Notice (speaker icon) center + this offset.
+  # This is the most likely value to need adjustment when changing device/resolution.
+  notice_home_offset: [142, 10]
+
+  close_xy: [1681, 177]        # Close button (X) for the MomoTalk popup
+  unread_tab_xy: [255, 430]    # "Unread" tab (chat bubble icon on the left) after reopening
+  first_row_xy: [450, 400]     # Center of the topmost conversation row in the unread list
+  row_height: 105              # Height of each conversation row
+  reply_label_offset: [200, 85]  # Offset from the "| Reply" label to the first reply option
+
+  # Other coordinates (reward_dismiss_xy, story_enter_*, home_badge_rel, etc.)
+  # are in src/config.py — MomoTalkConfig — and can be overridden here with the same key names.
 
 assets_dir: assets
 log_level: INFO
-save_debug_screens: false   # true 時把每次截圖存到 debug/ 方便排查
+save_debug_screens: false   # Set to true to save every tick's screenshot to debug/ for troubleshooting

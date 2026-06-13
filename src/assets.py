@@ -1,9 +1,9 @@
-"""元素資產註冊表: 邏輯狀態名 → 模板檔案清單。
+"""Asset registry: maps logical state names to template file lists.
 
-命名規則 (見專案說明):
-- xxx_full = 含外框/外部元素的完整截圖; xxx = 緊密裁切。
-- xxx_1 / xxx_2 = 同一元素的不同樣式 (顏色/漸變), 匹配時逐一嘗試。
-- lock_xxx = 鎖定/不可進入的變體。
+Naming conventions:
+- xxx_full  = full screenshot including surrounding border/elements; xxx = tight crop.
+- xxx_1 / xxx_2 = visual variants of the same element (color, gradient); all are tried.
+- lock_xxx  = locked / inaccessible variant of an element.
 """
 from __future__ import annotations
 
@@ -17,30 +17,30 @@ from .vision import Template
 
 log = logging.getLogger(__name__)
 
-# 邏輯名 → 來源檔名 (不含副檔名)。同名多檔代表多樣式, 逐一嘗試。
+# Logical name → source file stems (no extension). Multiple files = multiple visual variants.
 ASSET_GROUPS: Dict[str, List[str]] = {
-    # --- 網路/意外 ---
+    # --- Network / unexpected popups ---
     "network_reconnect": ["notice_reconnect"],
     "network_notice": ["notice_text"],
-    # --- 戰鬥 ---
+    # --- Combat ---
     "pause_continue": ["common_button_continue"],
-    "combat_completed": ["combat_completed_confirm"],          # 成功結算確認 (右下)
-    "combat_failure": ["combat_failure_confirm"],              # 失敗結算確認 (中下, 需二次點擊)
-    "combat_completed_icon": ["combat_completed_icon_analyze"],  # 結算頁必有的 analyze 圖標
+    "combat_completed": ["combat_completed_confirm"],          # Win result confirm (bottom-right)
+    "combat_failure": ["combat_failure_confirm"],              # Loss result confirm (bottom-center; needs a 2nd tap)
+    "combat_completed_icon": ["combat_completed_icon_analyze"],  # Analyze icon always present on result screen
     "combat_mobilize": ["combat_mobilize_1", "combat_mobilize_2", "combat_mobilize_3"],
     "combat_auto_off": ["combat_auto_unenabled"],
     "combat_auto_on": ["combat_auto_enabled"],
     "combat_speed_1": ["combat_speed_1"],
     "combat_speed_2": ["combat_speed_2_1", "combat_speed_2_2"],
     "combat_speed_3": ["combat_speed_3", "combat_speed_3_2"],
-    # --- 劇情中 ---
+    # --- Story playback ---
     "story_menu": ["story_menu_"],
     "story_menu_selected": ["story_menu_selected"],
     "story_auto": ["story_auto_1", "story_auto_2"],
     "story_skip": ["story_skip"],
     "story_skip_confirm": ["story_skip_confirm_1", "story_skip_confirm_2"],
     "story_skip_cancel": ["story_skip_cancel"],
-    # --- 故事列表頁 (未進入) ---
+    # --- Story list (not yet entered) ---
     "story_enter": [
         "story_enter_1",
         "story_enter_2",
@@ -54,37 +54,42 @@ ASSET_GROUPS: Dict[str, List[str]] = {
     "story_cleared": ["story_cleared", "story_cleared_full"],
     "book_done": ["story_book_completed"],
     "book_undone": ["story_book_undone"],
-    # --- 鎖定 ---
+    # --- Locked stages ---
     "lock": ["lock", "lock_combat", "lock_enter", "lock_enter_full"],
-    # --- 好感劇情 (MomoTalk) ---
-    "momotalk_title": ["momotalk_title"],          # 粉色 "MomoTalk" 標題 → 在彈窗內
-    "momotalk_reply": ["momotalk_reply"],          # 對話右下「| Reply」標籤 (有回覆選項時才出現)
-    "momotalk_reward": ["momotalk_reward"],        # 劇情後 "TOUCH TO CONTINUE" 領獎頁
-    "momotalk_story_enter": ["momotalk_story_enter"],  # 對話中粉色 "Relationship Story" 按鈕
-    "momotalk_story_begin": ["momotalk_story_begin"],  # "Begin Relationship Story" 青色按鈕
-    "momotalk_home": ["momotalk_home"],            # 主畫面 MomoTalk 入口圖標 (重開用)
+    # --- MomoTalk ---
+    "momotalk_title": ["momotalk_title"],          # Pink "MomoTalk" title → confirms we are inside the popup
+    "momotalk_reply": ["momotalk_reply"],          # "| Reply" label (appears only when reply options are available)
+    "momotalk_reward": ["momotalk_reward"],        # "TOUCH TO CONTINUE" reward screen after a relationship story
+    # Pink in-conversation "Relationship Story" button is detected by color, not template
+    # (the button text contains the character's name in small font → unstable across characters).
+    "momotalk_story_begin": ["momotalk_story_begin"],  # "Begin Relationship Story" teal button
+    "momotalk_notice": ["momotalk_notice"],        # Notice (speaker) icon on home screen — anchor for MomoTalk entry
 }
 
-# 個別群組的匹配門檻覆寫 (純文字/小圖標可調)。未列者用 default_threshold。
+# Per-group confidence threshold overrides. Groups not listed use default_threshold.
 THRESHOLD_OVERRIDES: Dict[str, float] = {
-    # 寬文字橫幅, 尺度峰窄 (細化後約 0.78-0.82); 文字獨特, 誤判風險極低 → 留餘量。
+    # Wide text banner; score peak is narrow after scale refinement (~0.78-0.82).
+    # Text is distinctive enough that false positives are not a concern → leave margin at 0.74.
     "story_cleared": 0.74,
-    # combat_speed_1 是小圖標; 現在只在 IN_COMBAT 狀態比對 (狀態機隔離),
-    # 不會再於非戰鬥畫面誤觸, 故沿用作者原值。
+    # Small icon; only matched while in COMBAT state (state machine isolation prevents false triggers
+    # elsewhere), so the original author value is safe to keep.
     "combat_speed_1": 0.82,
-    # MomoTalk: home 圖標較小, 0.75 會在頂部狀態列誤咬 (~0.82); 提高門檻。
-    # 且僅在主畫面 (momotalk_title 缺席) 才檢查, 雙重保險。
-    "momotalk_home": 0.90,
+    # Notice icon used as anchor; distinctive shape → 0.85 avoids false positives while tolerating lobby background variation.
+    "momotalk_notice": 0.85,
     "momotalk_title": 0.85,
-    "momotalk_reward": 0.85,
+    # "TOUCH TO CONTINUE" is small text; peak is ~0.87. Use 0.80 to catch it as soon as it appears
+    # (text is unique; false positive risk is negligible). Ensures priority-1 picks it up before
+    # an inactivity timeout could fire.
+    "momotalk_reward": 0.80,
     "momotalk_reply": 0.85,
 }
 
 
 def _load_template_gray(path: Path):
-    """讀取模板為灰階。若含 alpha (手繪多邊形裁切的透明角), 把透明像素填成
-    不透明區的平均灰度, 使其在 TM_CCOEFF_NORMED (均值相減) 下趨近中性、
-    不再以黑色破壞匹配。回傳 (gray, None) 或讀取失敗時 None。"""
+    """Load a template as grayscale. If the image has an alpha channel (polygon-cropped templates
+    with transparent corners), fill transparent pixels with the mean grayscale value of opaque
+    pixels so they are neutral under TM_CCOEFF_NORMED (mean-subtracted) and don't corrupt the
+    match score. Returns the grayscale array, or None on failure."""
     import numpy as np
 
     img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
@@ -105,7 +110,7 @@ def _load_template_gray(path: Path):
 
 
 def load_assets(assets_dir: str | Path) -> Dict[str, List[Template]]:
-    """載入所有群組模板 (灰階)。缺檔僅警告, 不中斷。"""
+    """Load all group templates as grayscale. Missing files emit a warning but don't abort."""
     base = Path(assets_dir)
     groups: Dict[str, List[Template]] = {}
     for name, files in ASSET_GROUPS.items():

@@ -1,1 +1,1 @@
-"""Blue Archive 自動劇情工具。"""
+"""Blue Archive auto-story tool."""
